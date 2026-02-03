@@ -7,9 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --link talon talon
-RUN pip install --user ./talon
-
+RUN pip install --user talon
+    
 COPY --link requirements.txt .
 RUN pip install --user -r requirements.txt
 

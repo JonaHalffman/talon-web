@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  talon-web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: talon-web-e2e
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - FLASK_APP=app.py
+    volumes:
+      - ../outputs:/app/outputs
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  default:
+    name: talon-e2e-network

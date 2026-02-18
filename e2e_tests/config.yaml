@@ -1,0 +1,51 @@
+# Talon-web E2E Test Configuration
+# Copy this file to config.yaml and fill in your values
+
+# Talon-web settings
+talon_web:
+  host: "localhost"
+  port: 5000
+  docker_image: "talon-web"
+  docker_container: "talon-web-e2e"
+
+# Email fetching settings
+email:
+  # Shared mailbox address
+  mailbox: "info@elektrotechnieker.be"
+  
+  # Default folders to fetch (can also use folder IDs)
+  folders:
+    - Inbox
+    - Sent Items
+  
+  # Default limit per folder
+  default_limit: 20
+  
+  # Date filter (optional)
+  # date_from: "2024-01-01"
+  # date_to: "2024-12-31"
+  
+  # Filter options
+  filters:
+    include_attachments: true
+    unread_only: false
+
+# Output settings
+output:
+  base_dir: "outputs"
+  originals_subdir: "originals"
+  html_subdir: "html_bodies"
+  processed_subdir: "processed"
+  reports_subdir: "reports"
+
+# Processing settings
+processing:
+  # Timeout for each request in seconds
+  request_timeout: 30
+  
+  # Retry settings
+  max_retries: 3
+  retry_delay_seconds: 2
+  
+  # Save full responses
+  save_full_responses: true

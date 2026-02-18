@@ -18,6 +18,8 @@ COPY --link --from=compile-image /root/.local /root/.local
 
 COPY --link app.py .
 COPY --link healthcheck.py .
+COPY --link preprocessing.py .
+COPY --link postprocessing.py .
 
 ENV PATH=/root/.local/bin:$PATH
 

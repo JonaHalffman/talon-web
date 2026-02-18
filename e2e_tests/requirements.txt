@@ -1,0 +1,20 @@
+# Microsoft Graph API & Authentication
+msal>=1.24.0
+azure-identity>=1.14.0
+
+# HTTP & Data
+requests>=2.31.0
+python-dotenv>=0.21.0
+
+# Email parsing
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# YAML config
+pyyaml>=6.0
+
+# Docker integration
+docker>=6.1.0
+
+# Utilities
+python-dateutil>=2.8.0

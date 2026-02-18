@@ -26,17 +26,24 @@ def strip_html_to_text(html: str) -> str:
     return text
 
 
-def extract_signature(html: str) -> Tuple[str, str]:
+def extract_signature(html: str, include_signature: bool = True) -> Tuple[str, str]:
     """
     Extract signature from HTML.
     Returns: (html_without_signature, signature_text)
+    
+    Args:
+        html: The HTML content to extract signature from
+        include_signature: If False, returns empty signature (for replies that shouldn't include sig)
     """
+    if not include_signature:
+        return html, ""
+    
     signature = ""
     
     patterns = [
-        r'(<div[^>]*class="[^"]*signature[^"]*"[^>]*>.*?)',
-        r'(<p[^>]*>--\s*</p>.*?)',
-        r'(<div[^>]*>\s*--\s*<br\s*/?>.*?)',
+        r'(<div[^>]*class="[^"]*signature[^"]*"[^>]*>.*?</div>)',
+        r'(<p[^>]*>--\s*</p>.*?)(?=</body>)',
+        r'(<div[^>]*>\s*--\s*<br\s*/?>.*?)(?=</body>)',
     ]
     
     for pattern in patterns:
@@ -49,19 +56,38 @@ def extract_signature(html: str) -> Tuple[str, str]:
     if not signature:
         text = strip_html_to_text(html)
         lines = text.split('\n')
-        if len(lines) > 2:
-            last_lines = lines[-5:]
-            for i, line in enumerate(last_lines):
-                if re.match(r'^[\s-]*$', line):
-                    continue
-                if re.match(r'^[\s]*[\w\s]+[\s]*$', line):
-                    if i > 0:
-                        signature = '\n'.join(last_lines[i:])
-                        html_lines = lines[:-5 + i] if i < 5 else lines[:-5]
-                        html = '\n'.join(html_lines)
-                        break
+        
+        for idx in range(len(lines) - 1, -1, -1):
+            line = lines[idx].strip()
+            if line == '--' or line == '—':
+                if idx + 1 < len(lines):
+                    signature = '\n'.join(lines[idx:])
+                    html = '\n'.join(lines[:idx])
+                break
+        
+        if not signature and len(lines) >= 3:
+            last_line = lines[-1].strip()
+            if re.match(r'^[\w\s\-\.]+$', last_line) and len(last_line) > 3:
+                if re.match(r'^[\w\s\-\.]+$', lines[-2].strip()) if len(lines) > 1 else False:
+                    signature = '\n'.join(lines[-3:])
+                    html = '\n'.join(lines[:-3])
+    
+    if signature:
+        signature = _extract_corporate_signature_details(signature)
     
     return html, signature
+
+
+def _extract_corporate_signature_details(signature: str) -> str:
+    """
+    Clean up and normalize corporate signatures.
+    Extracts structured info from complex HTML signatures.
+    """
+    text = strip_html_to_text(signature)
+    
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
 
 
 def extract_first_message_only(html: str) -> str:

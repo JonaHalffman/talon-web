@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 def detect_email_client(html: str) -> str:
     """
     Detect the email client format from HTML.
-    Returns: o365, outlook_desktop, gmail, apple_mail, yahoo, unknown
+    Returns: o365, outlook_desktop, gmail, apple_mail, yahoo, word_generated, unknown
     """
     html_lower = html.lower()
     
@@ -24,6 +24,8 @@ def detect_email_client(html: str) -> str:
         return "apple_mail"
     elif '<blockquote' in html_lower:
         return "yahoo"
+    elif 'microsoft word' in html_lower or 'generator" content="microsoft word' in html_lower:
+        return "word_generated"
     
     return "unknown"
 
@@ -32,9 +34,27 @@ def remove_o365_reply_div(html: str) -> str:
     """
     Remove O365 reply marker div and following quoted content div.
     Talon's cut_microsoft_quote() finds the marker but misses sibling divs.
+    Handles multiple O365 nested div structures.
     """
     patterns = [
         r'<div[^>]*id="divRplyFwdMsg"[^>]*>.*?</div>\s*<div[^>]*>',
+        r'<div[^>]*id="divRplyFwdMsg"[^>]*>.*?</div>\s*<div[^>]*>\s*<div[^>]*>',
+        r'<div[^>]*class="RplyEdtPrsngMsg"[^>]*>.*?</div>\s*<div[^>]*>',
+        r'<div[^>]*class="RplyEdtPrsngMsg"[^>]*>.*?</div>\s*<div[^>]*>\s*<div[^>]*>',
+    ]
+    
+    for pattern in patterns:
+        html = re.sub(pattern, '', html, flags=re.DOTALL | re.IGNORECASE)
+    
+    return html
+
+
+def remove_o365_forward_div(html: str) -> str:
+    """
+    Remove O365 forward marker divs.
+    """
+    patterns = [
+        r'<div[^>]*id="divRplyFwdMsg"[^>]*>.*?forwarded.*?</div>',
     ]
     
     for pattern in patterns:
@@ -74,12 +94,43 @@ def remove_outlook_desktop_quoted_content(html: str) -> str:
 
 
 def remove_gmail_quote_marker(html: str) -> str:
-    """Remove Gmail quoted content markers."""
+    """
+    Remove Gmail quoted content markers.
+    Gmail uses class="gmail_quote" for quoted content.
+    """
+    patterns = [
+        r'<div[^>]*class="gmail_quote"[^>]*>.*',
+    ]
+    
+    for pattern in patterns:
+        html = re.sub(pattern, '', html, flags=re.DOTALL | re.IGNORECASE)
+    
+    return html
+
+
+def remove_apple_mail_quote(html: str) -> str:
+    """
+    Remove Apple Mail quoted content.
+    Apple Mail uses type="cite" in blockquotes.
+    """
+    return html
+
+
+def remove_yahoo_quote(html: str) -> str:
+    """
+    Remove Yahoo quoted content.
+    Yahoo uses blockquote without specific class.
+    """
     return html
 
 
 def normalize_blockquotes(html: str) -> str:
-    """Normalize various blockquote formats for better talon detection."""
+    """
+    Normalize various blockquote formats for better talon detection.
+    """
+    html = re.sub(r'<blockquote[^>]*type="cite"[^>]*>', '<blockquote class="apple_quote">', html, flags=re.IGNORECASE)
+    html = re.sub(r'<blockquote[^>]*class="gmail_quote"[^>]*>', '<blockquote class="gmail_quote">', html, flags=re.IGNORECASE)
+    
     return html
 
 
@@ -169,6 +220,184 @@ def detect_reply_forward(html: str) -> dict:
     return {"is_reply": is_reply, "is_forward": is_forward}
 
 
+def clean_subject(subject: str) -> dict:
+    """
+    Clean subject line by removing reply/forward prefixes.
+    Returns: {original: str, clean: str, prefix: str, is_reply: bool, is_forward: bool}
+    
+    Handles: RE:, RE[n]:, FW:, FWD:, Fwd:, Ré:, AW:, WG:, etc.
+    """
+    result = {
+        "original": subject,
+        "clean": subject,
+        "prefix": "",
+        "is_reply": False,
+        "is_forward": False,
+    }
+    
+    if not subject:
+        return result
+    
+    subject_clean = subject.strip()
+    
+    reply_patterns = [
+        r'^(re[\[\s\d:\]]*):\s*',
+        r'^(ré[\[\s\d:\]]*):\s*',
+        r'^(aw[\[\s\d:\]]*):\s*',  # Antwoord (Dutch)
+        r'^(antw[\[\s\d:\]]*):\s*',
+        r'^(antwort[\[\s\d:\]]*):\s*',  # German
+        r'^(odp[\[\s\d:\]]*):\s*',  # Polish
+        r'^(sv[\[\s\d:\]]*):\s*',  # Swedish
+    ]
+    
+    forward_patterns = [
+        r'^(fw[\[\s\d:\]]*):\s*',
+        r'^(fwd[\[\s\d:\]]*):\s*',
+        r'^(vs[\[\s\d:\]]*):\s*',  # Dutch
+        r'^( Weiterleitung)',  # German
+    ]
+    
+    for pattern in reply_patterns:
+        match = re.match(pattern, subject_clean, re.IGNORECASE)
+        if match:
+            result["prefix"] = match.group(1)
+            result["clean"] = subject_clean[match.end():].strip()
+            result["is_reply"] = True
+            break
+    
+    if not result["is_reply"]:
+        for pattern in forward_patterns:
+            match = re.match(pattern, subject_clean, re.IGNORECASE)
+            if match:
+                result["prefix"] = match.group(1)
+                result["clean"] = subject_clean[match.end():].strip()
+                result["is_forward"] = True
+                break
+    
+    return result
+
+
+def detect_subject_change(html: str, original_subject: str = None) -> dict:
+    """
+    Detect if subject has changed in a thread.
+    Compares current subject with quoted/previous subject headers.
+    
+    Returns: {
+        "subject_changed": bool,
+        "current_subject": str,
+        "previous_subject": str,
+        "thread_break": bool
+    }
+    
+    thread_break: True if subject changed significantly (new conversation)
+    """
+    result = {
+        "subject_changed": False,
+        "current_subject": "",
+        "previous_subject": "",
+        "thread_break": False,
+    }
+    
+    current_match = re.search(r'<b[^>]*>Onderwerp:</b>\s*([^<]+)', html, re.IGNORECASE)
+    if not current_match:
+        current_match = re.search(r'<b[^>]*>Subject:</b>\s*([^<]+)', html, re.IGNORECASE)
+    if current_match and current_match.group(1):
+        result["current_subject"] = current_match.group(1).strip()
+    
+    if original_subject:
+        result["previous_subject"] = original_subject
+        if result["current_subject"] and result["previous_subject"]:
+            current_clean = clean_subject(result["current_subject"])["clean"]
+            prev_clean = clean_subject(result["previous_subject"])["clean"]
+            
+            if current_clean.lower() != prev_clean.lower():
+                result["subject_changed"] = True
+                result["thread_break"] = True
+        
+        return result
+    
+    header_subjects = re.findall(r'<b[^>]*>Onderwerp:</b>\s*([^<]+)', html, re.IGNORECASE)
+    header_subjects.extend(re.findall(r'<b[^>]*>Subject:</b>\s*([^<]+)', html, re.IGNORECASE))
+    
+    if len(header_subjects) > 1:
+        result["previous_subject"] = header_subjects[-1].strip()
+        
+        current_clean = clean_subject(result["current_subject"])["clean"]
+        prev_clean = clean_subject(result["previous_subject"])["clean"]
+        
+        if current_clean.lower() != prev_clean.lower():
+            result["subject_changed"] = True
+            result["thread_break"] = True
+    
+    return result
+
+
+def extract_sender_from_html(html: str) -> dict:
+    """
+    Extract sender information from HTML headers.
+    Returns: {name: str, email: str, raw: str}
+    """
+    result = {"name": "", "email": "", "raw": ""}
+    
+    patterns = [
+        r'<b[^>]*>Van:|From:</b>\s*([^<]+(?:<[^>]+>[^<]+)*)<',
+        r'<b[^>]*>Van:|From:</b>\s*([^<]+)',
+        r'[\w\s]+<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})>',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match:
+            raw = match.group(1).strip()
+            result["raw"] = re.sub(r'<[^>]+>', '', raw).strip()
+            
+            email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', raw, re.IGNORECASE)
+            if email_match:
+                result["email"] = email_match.group(1).lower()
+            
+            name_match = re.search(r'^([^<]+?)(?:\s*<|$)', raw)
+            if name_match:
+                result["name"] = name_match.group(1).strip()
+            
+            if result["email"] or result["name"]:
+                break
+    
+    return result
+
+
+def parse_received_date(html: str) -> dict:
+    """
+    Parse received/sent date from HTML headers.
+    Returns: {raw: str, parsed: str, timestamp: int or None}
+    """
+    result = {"raw": "", "parsed": "", "timestamp": None}
+    
+    import datetime
+    
+    patterns = [
+        r'<b[^>]*>Verzonden:|Sent:</b>\s*([^<]+)',
+        r'<b[^>]*>Date:</b>\s*([^<]+)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match and match.group(1):
+            raw_date = match.group(1).strip()
+            result["raw"] = raw_date
+            
+            try:
+                from email.utils import parsedate_to_datetime
+                parsed_dt = parsedate_to_datetime(raw_date)
+                result["parsed"] = parsed_dt.isoformat()
+                result["timestamp"] = int(parsed_dt.timestamp())
+            except Exception:
+                result["parsed"] = raw_date
+            
+            break
+    
+    return result
+
+
 def calculate_confidence(html: str, extracted: str, original_length: int) -> dict:
     """
     Calculate confidence score for extraction quality.
@@ -227,10 +456,124 @@ def calculate_confidence(html: str, extracted: str, original_length: int) -> dic
     }
 
 
+def detect_thread_structure(html: str) -> dict:
+    """
+    Detect if email contains multiple messages (thread).
+    Returns: {is_thread: bool, message_count: int, message_positions: list}
+    """
+    result = {
+        "is_thread": False,
+        "message_count": 1,
+        "message_positions": [],
+    }
+    
+    quote_markers = []
+    
+    o365_pattern = r'<div[^>]*id="divRplyFwdMsg"'
+    for match in re.finditer(o365_pattern, html, re.IGNORECASE):
+        quote_markers.append({"type": "o365", "position": match.start()})
+    
+    outlook_pattern = r'<div[^>]*style="[^"]*border-top:solid'
+    for match in re.finditer(outlook_pattern, html, re.IGNORECASE):
+        quote_markers.append({"type": "outlook_desktop", "position": match.start()})
+    
+    blockquote_pattern = r'<blockquote'
+    for match in re.finditer(blockquote_pattern, html, re.IGNORECASE):
+        quote_markers.append({"type": "blockquote", "position": match.start()})
+    
+    header_patterns = [
+        r'<b[^>]*>Van:|From:</b>',
+        r'<b[^>]*>Verzonden:|Sent:</b>',
+        r'<b[^>]*>Onderwerp:|Subject:</b>',
+    ]
+    for pattern in header_patterns:
+        for match in re.finditer(pattern, html, re.IGNORECASE):
+            if match.start() > 500:
+                quote_markers.append({"type": "header", "position": match.start()})
+    
+    quote_markers.sort(key=lambda x: x["position"])
+    
+    if len(quote_markers) > 1:
+        result["is_thread"] = True
+        result["message_count"] = len(quote_markers) + 1
+        result["message_positions"] = [m["position"] for m in quote_markers]
+    
+    return result
+
+
+def split_thread_messages(html: str) -> list:
+    """
+    Split thread into individual messages.
+    Returns: list of message dicts with html and metadata
+    """
+    messages = []
+    structure = detect_thread_structure(html)
+    
+    if not structure["is_thread"]:
+        return [{"html": html, "is_newest": True, "index": 0}]
+    
+    positions = [0] + structure["message_positions"]
+    
+    for i, start in enumerate(positions):
+        end = positions[i + 1] if i + 1 < len(positions) else len(html)
+        msg_html = html[start:end]
+        
+        msg_html = fix_html_structure(msg_html)
+        
+        messages.append({
+            "html": msg_html,
+            "is_newest": i == 0,
+            "index": i,
+        })
+    
+    return messages
+
+
+def detect_forward(html: str) -> dict:
+    """
+    Enhanced forward detection from HTML content.
+    Returns: {is_forward: bool, forward_count: int, has_original_attachment: bool}
+    """
+    result = {
+        "is_forward": False,
+        "forward_count": 0,
+        "has_original_attachment": False,
+    }
+    
+    forward_patterns = [
+        r'<b[^>]*>Onderwerp:|Subject:</b>\s*FW[:\s]',
+        r'<b[^>]*>Onderwerp:|Subject:</b>\s*Fwd[:\s]',
+        r'---------- Forwarded message ----------',
+        r'Begin forwarded message:',
+    ]
+    
+    for pattern in forward_patterns:
+        matches = re.findall(pattern, html, re.IGNORECASE)
+        result["forward_count"] += len(matches)
+    
+    if result["forward_count"] > 0:
+        result["is_forward"] = True
+    
+    attachment_patterns = [
+        r'<a[^>]*href="cid:',
+        r'<img[^>]*src="cid:',
+    ]
+    
+    for pattern in attachment_patterns:
+        if re.search(pattern, html, re.IGNORECASE):
+            result["has_original_attachment"] = True
+            break
+    
+    return result
+
+
 PRE_PROCESSORS = [
+    normalize_blockquotes,
     remove_outlook_web_reply_marker,
     remove_o365_reply_div,
+    remove_o365_forward_div,
     remove_outlook_desktop_quoted_content,
+    remove_gmail_quote_marker,
 ]
 
 

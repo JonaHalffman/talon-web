@@ -1,35 +1,43 @@
 # talon-web
 
-A Flask microservice that transforms raw HTML emails into clean conversation threads for helpdesk-style applications.
+**Email Thread Processor** - Transforms raw HTML emails into clean conversation threads for helpdesk applications (Freshdesk, Intercom, Zendesk, etc.).
 
 ## What It Does
 
 ```
-Raw HTML Email (from Microsoft Graph / Gmail API)
+Raw HTML Email (Microsoft Graph / Gmail API)
          │
          ▼
-┌─────────────────────────────────────┐
-│       talon-web                      │
-│  • Extracts the new reply            │
-│  • Removes quoted content            │
-│  • Separates signatures              │
-│  • Detects email client format      │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│             talon-web                      │
+│  • Extracts newest reply only            │
+│  • Removes quoted content                 │
+│  • Separates signatures                   │
+│  • Parses sender/date metadata           │
+│  • Detects thread breaks                  │
+└─────────────────────────────────────────┘
          │
          ▼
-Clean Conversation Data (JSON)
+Clean Thread Data (JSON + HTML + Plain Text)
 ```
+
+## Why This Service
+
+When customers reply to emails, the original message gets quoted. Helpdesk systems need only the **newest reply**:
+
+- Extract reply from quoted threads
+- Get both HTML and plain text output
+- Separate signatures from message body
+- Detect when subject changes (new thread)
+- Parse sender info and timestamps
+- Sanitize HTML (remove scripts, trackers)
 
 ## Quick Start
 
 ```bash
-# Run with Docker
+# Build and run with Docker
 docker build -t talon-web .
 docker run -p 5000:5000 talon-web
-
-# Or run locally
-pip install -r requirements.txt
-python app.py
 ```
 
 ## API Usage
@@ -40,29 +48,42 @@ curl -X POST http://localhost:5000/reply/extract_from_html \
   -d '<html><body>Your email HTML here</body></html>'
 ```
 
-## What You Get
+### Query Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `include_signature` | true | Include signature in output |
+| `full_thread` | false | Return all thread messages |
+
+## Response Fields
 
 | Field | Description |
 |-------|-------------|
-| `html` | Clean HTML reply (no quotes, no scripts) |
+| `html` | Clean HTML reply (no quotes) |
 | `text` | Plain text version |
 | `original_html` | Original for archival |
 | `quoted_html` | Extracted quoted content |
 | `signature` | Separated signature |
-| `metadata` | Sender, date, thread info |
+| `metadata` | Sender, date, thread, subject info |
 
-## Features
+### Metadata Fields
 
-- **Quote Extraction** - Removes quoted content from replies
-- **Signature Detection** - Separates signatures from message body
-- **Sender/Date Parsing** - Extracts metadata from email headers
-- **Thread Detection** - Identifies multi-message threads
-- **HTML Sanitization** - Removes scripts, trackers, dangerous elements
-- **Multi-format Support** - O365, Outlook Desktop, Gmail, Apple Mail, Yahoo
+```json
+"metadata": {
+  "has_reply": true,
+  "is_reply": true,
+  "is_forward": false,
+  "sender": {"name": "", "email": "", "raw": ""},
+  "date": {"raw": "", "parsed": "", "timestamp": null},
+  "thread": {"is_thread": false, "message_count": 1},
+  "subject": {"original": "", "clean": "", "prefix": "", "is_reply": false},
+  "subject_change": {"subject_changed": false, "thread_break": false}
+}
+```
 
-## Supported Email Clients
+## Supported Formats
 
-| Client | Status |
+| Format | Status |
 |--------|--------|
 | O365 Web | ✅ |
 | Outlook Desktop | ✅ |
@@ -71,16 +92,20 @@ curl -X POST http://localhost:5000/reply/extract_from_html \
 | Yahoo | ✅ |
 | Word-generated | ✅ |
 
-## Configuration
+## Architecture
 
-Query parameters:
-- `include_signature=true|false` - Include or exclude signature in output
+- **Input**: Raw HTML from email APIs (Microsoft Graph, Gmail API)
+- **Processing**: Pre-processing → Talon ML → Post-processing
+- **Output**: Structured JSON with HTML/plain text
 
 ## Development
 
 ```bash
 # Run tests
 pytest
+
+# Run locally
+python app.py
 
 # Run with gunicorn
 gunicorn app:app --bind=0.0.0.0:5000 --workers=4

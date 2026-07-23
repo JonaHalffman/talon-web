@@ -7,8 +7,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --user talon
-    
 COPY --link requirements.txt .
 RUN pip install --user -r requirements.txt
 
@@ -25,4 +23,4 @@ ENV PATH=/root/.local/bin:$PATH
 
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 CMD ["python", "healthcheck.py"]
 
-ENTRYPOINT ["gunicorn", "app:app", "--bind=0.0.0.0:5000", "--log-level=debug", "--workers=4"]
+ENTRYPOINT ["sh", "-c", "exec gunicorn app:app --bind=0.0.0.0:${PORT:-5000} --log-level=info --workers=4"]

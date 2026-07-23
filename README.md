@@ -40,6 +40,9 @@ docker build -t talon-web .
 docker run -p 5000:5000 talon-web
 ```
 
+The container listens on `PORT` when set and otherwise defaults to port `5000`.
+Request bodies are limited to 5 MiB.
+
 ## API Usage
 
 ```bash

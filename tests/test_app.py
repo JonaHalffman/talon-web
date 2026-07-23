@@ -63,7 +63,8 @@ class TestExtractEndpoint:
         assert response.status_code == 200
         data = json.loads(response.data)
         
-        assert 'extracted' in data
+        assert data['success'] is True
+        assert 'html' in data
         assert 'ratio' in data
         assert 'original_length' in data
         assert 'extracted_length' in data
@@ -107,10 +108,11 @@ class TestExtractEndpoint:
             content_type='text/html'
         )
         
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = json.loads(response.data)
-        
-        assert data['ratio'] == 1.0
+
+        assert data['success'] is False
+        assert data['error'] == 'Empty HTML input'
 
     def test_returns_valid_json(self, client, sample_plain_email_html):
         """Test that response is valid JSON."""
@@ -176,3 +178,12 @@ class TestHealthEndpoint:
         response = client.get('/health')
         
         assert response.content_type == 'text/html; charset=utf-8'
+
+
+class TestRequestSizeLimit:
+    """Tests for bounded request bodies."""
+
+    def test_limits_request_bodies_to_five_megabytes(self):
+        from app import app
+
+        assert app.config['MAX_CONTENT_LENGTH'] == 5 * 1024 * 1024

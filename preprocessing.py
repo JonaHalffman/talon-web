@@ -340,8 +340,8 @@ def extract_sender_from_html(html: str) -> dict:
     result = {"name": "", "email": "", "raw": ""}
     
     patterns = [
-        r'<b[^>]*>Van:|From:</b>\s*([^<]+(?:<[^>]+>[^<]+)*)<',
-        r'<b[^>]*>Van:|From:</b>\s*([^<]+)',
+        r'<b[^>]*>(?:Van|From):</b>\s*([^<]+(?:<[^>]+>[^<]+)*)<',
+        r'<b[^>]*>(?:Van|From):</b>\s*([^<]+)',
         r'[\w\s]+<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})>',
     ]
     
